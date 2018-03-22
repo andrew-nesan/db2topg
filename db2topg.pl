@@ -397,6 +397,7 @@ sub parse_dump
 		next if ($line =~ /^COMMIT WORK/);
 		next if ($line =~ /^TERMINATE/);
 		next if ($line =~ /^(CREATE|ALTER) STOGROUP/);
+		next if ($line =~ /^SET SYSIBM.NLS_STRING_UNITS/);
 		next if ($line =~ /^SET NLS_STRING_UNITS/);
 		next if ($line =~ /^ALTER TABLE.*VOLATILE CARDINALITY/);
 
@@ -468,7 +469,7 @@ sub parse_dump
 			}
 			die ("Overflow in create schema: " . join('',@$refstatement)) unless ($#$refstatement == -1);
 		}
-		elsif ($line =~ /^CREATE SEQUENCE "(.*?)\s*"\."(.*?)\s*" AS (INTEGER|BIGINT)/)
+		elsif ($line =~ /^CREATE SEQUENCE "(.*?)\s*"\."(.*?)\s*" AS (INTEGER|BIGINT|DECIMAL|SMALLINT)/)
 		{
 			# CREATE SEQUENCE are sometimes multi-line. weird. Anyway, put everything in a single line and salvage what we can :)
 			# We don't care about integer/bigint. All sequences are bigint in PG
@@ -563,44 +564,36 @@ sub parse_dump
 						# It's multi-line. Let's read the rest. There is always the exact same records
 						while (my $line=shift(@$refstatement))
 						{
-
-
-							$line =~ /START WITH \+(\d+)|INCREMENT BY \+(\d+)|MINVALUE \+(\d+)|MAXVALUE \+(\d+)|(NO CYCLE)|(NO )?CACHE (\d+)?|(NO ORDER \) ,)/ or die "Cannot understand $line in an IDENTITY definition";
-							if (defined ($1))
-							{
-								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{STARTWITH}=$1;
-							}
-							if (defined ($2))
-							{
-								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{INCREMENTBY}=$2;
-							}
-							if (defined ($3))
-							{
-								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{MINVALUE}=$3;
-							}
-							if (defined ($4))
-							{
-								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{MAXVALUE}=$4;
-							}
-							if (defined ($5))
-							{
+                                                  if ($line =~ /START WITH \+(\d+)/) {
+						    $schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{STARTWITH}=$1;
+                                                  }
+                                                  if ($line =~ /INCREMENT BY \+(\d+)/) {
+								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{INCREMENTBY}=$1;
+                                                  }
+                                                  if ($line =~ /MINVALUE \+(\d+)/) {
+								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{MINVALUE}=$1;
+                                                  }
+                                                  if ($line =~ /MAXVALUE \+(\d+)/) {
+								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{MAXVALUE}=$1;
+                                                  }
+                                                  if ($line =~ /NO CYCLE/) {
 								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{CYCLE}=0;
-							}
-							if (defined ($6) or not defined ($7))
-							{
-								# No cache… means cache=1 under PostgreSQL
+                                                  }
+                                                  if ($line =~ /NO CACHE/) {
 								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{CACHE}=1;
-							}
-							elsif (defined ($7))
-							{
-								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{CACHE}=$7;
-							}
-							if (defined ($8))
-							{
+                                                  }
+                                                  if ($line =~ /CACHE (\d+)/) {
+								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{CACHE}=$1;
+                                                  }
+                                                  if ($line =~ /ORDER/) {
 								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{ORDER}=0;
 								last; # Finished reading the identity definition
-							}
-						}
+                                                  }
+                                                  if ($line =~ /NO ORDER/) {
+								$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{COLS}->{$colname}->{IDENTITY}->{ORDER}=1;
+								last; # Finished reading the identity definition
+                                                  }
+                                               }
 
 					}
 					elsif (defined ($colgeneratedbydefaultexpression))
@@ -629,7 +622,24 @@ sub parse_dump
 						$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{TBSINDEX}=$2 if (defined $2);
 						$schema_db2->{SCHEMAS}->{$schema}->{TABLES}->{$table}->{TBSLONG}=$3 if (defined $3);
 				}
-				elsif ($line =~ /^\s*ORGANIZE BY ROW/)
+				elsif ($line =~ /^\s*CCSID UNICODE/)
+				{
+					next;
+				}
+				elsif ($line =~ /^\s*CCSID ASCII/)
+				{
+					next;
+				}
+                                elsif ($line =~ /^\s*ORGANIZE BY ROW/)
+                                {
+                                        next;
+                                }
+
+				elsif ($line =~ /PART /)
+				{
+					next;
+				}
+				elsif ($line =~ /PARTITION BY RANGE/)
 				{
 					next;
 				}
@@ -896,6 +906,10 @@ sub parse_dump
 			{
 				print STDERR "$indexschema.$indexname is clustered. Clustered (or IOT) indexes aren't supported in PostgreSQL. Creating a normal index\n";
 				next; # Ignore PCTFREE
+			}
+			elsif ($line =~ /^\s*PARTITIONED\s*$/)
+			{
+				next; 
 			}
 			elsif ($line =~ /^\s*INCLUDE NULL KEYS ALLOW REVERSE SCANS\s*$/)
 			{
